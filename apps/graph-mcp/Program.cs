@@ -31,7 +31,7 @@ var transport = builder.Configuration.GetSection("Transport").Get<TransportOptio
 builder.Services.AddOptions<TransportOptions>().BindConfiguration("Transport")
     .Validate(o => o.McpPort is >= 1024 and <= 65535 && o.OperatorPort is >= 1024 and <= 65535
         && o.McpPort != o.OperatorPort, "Distinct unprivileged MCP and operator ports are required.")
-    .Validate(o => o.MaxRequestBytes is >= 1024 and <= 32_768, "MCP request limit must be 1–32 KiB.")
+    .Validate(o => o.MaxRequestBytes is >= 1024 and <= 262_144, "MCP request limit must be 1–256 KiB.")
     .Validate(o => o.AllowedHosts.Length > 0 && o.AllowedHosts.All(h => Uri.CheckHostName(h) != UriHostNameType.Unknown),
         "AllowedHosts must contain exact hostnames or IP addresses, never wildcards.")
     .Validate(o => o.KnownProxies.All(p => IPAddress.TryParse(p, out _)), "KnownProxies must contain IP addresses.")
@@ -70,7 +70,7 @@ builder.Services.AddMcpServer().WithHttpTransport(o =>
 {
     o.SessionMode = HttpServerSessionMode.Stateless;
     // Legacy SSE stays disabled (the SDK default); the old enabling API is obsolete.
-}).WithTools<AccountTools>().WithTools<MailTools>().WithTools<CalendarTools>();
+}).WithTools<AccountTools>().WithTools<MailTools>().WithTools<CalendarTools>().WithTools<DraftTools>();
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<TransportOptions>>().Value;

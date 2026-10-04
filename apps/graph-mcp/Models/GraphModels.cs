@@ -39,10 +39,10 @@ public sealed record AvailabilityRequest
 public sealed record PageResult<T>(IReadOnlyList<T> Items, string? NextCursor, bool Truncated = false);
 public sealed record EmailAddressDto(string? Name, string? Address);
 public sealed record AccountDto(string Id, string? DisplayName, string? Mail, string? UserPrincipalName);
-public sealed record MailSummaryDto(string Id, string? Subject, EmailAddressDto? Sender, DateTimeOffset? ReceivedDateTime, bool IsRead, bool HasAttachments, string? BodyPreview);
+public sealed record MailSummaryDto(string Id, string? Subject, EmailAddressDto? Sender, DateTimeOffset? ReceivedDateTime, bool IsRead, bool HasAttachments, string? BodyPreview, bool IsDraft = false);
 public sealed record MailSearchResult(IReadOnlyList<MailSummaryDto> Items, bool PossiblyTruncated);
 public sealed record AttachmentMetadataDto(string Id, string? Name, string? ContentType, long Size, bool IsInline, string Kind);
-public sealed record MailMessageDto(MailSummaryDto Summary, EmailAddressDto? From, IReadOnlyList<EmailAddressDto> To, IReadOnlyList<EmailAddressDto> Cc, DateTimeOffset? SentDateTime, string BodyText, bool BodyTruncated, IReadOnlyList<AttachmentMetadataDto> Attachments, bool AttachmentsTruncated, bool RecipientsTruncated);
+public sealed record MailMessageDto(MailSummaryDto Summary, EmailAddressDto? From, IReadOnlyList<EmailAddressDto> To, IReadOnlyList<EmailAddressDto> Cc, DateTimeOffset? SentDateTime, string BodyText, bool BodyTruncated, IReadOnlyList<AttachmentMetadataDto> Attachments, bool AttachmentsTruncated, bool RecipientsTruncated, IReadOnlyList<EmailAddressDto>? Bcc = null, string? EditVersion = null);
 public sealed record AttachmentContentDto(string Text, string Encoding, bool Truncated);
 public sealed record AttachmentResult(AttachmentMetadataDto Metadata, AttachmentContentDto? Content, string? ContentUnavailableReason);
 public sealed record CalendarDto(string Id, string? Name, bool IsDefaultCalendar);

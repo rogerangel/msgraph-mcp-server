@@ -4,6 +4,7 @@ using System.Net;
 using System.Collections.Concurrent;
 using GraphMcp.Auth;
 using GraphMcp.Graph;
+using GraphMcp.Infrastructure;
 using GraphMcp.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -22,6 +23,8 @@ public sealed class McpTestFactory : WebApplicationFactory<Program>
 {
     private readonly string directory = Path.Combine(Path.GetTempPath(), "graph-mcp-tests-" + Guid.NewGuid().ToString("N"));
     public FakeGraphServices Graph { get; } = new();
+    public FakeDraftServices Drafts { get; } = new();
+    public bool UseRealDraftService { get; set; }
     public Dictionary<string, string?> ConfigurationOverrides { get; } = [];
     public ConcurrentQueue<string> Logs { get; } = new();
 
@@ -67,6 +70,13 @@ public sealed class McpTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IMailService>(Graph);
             services.AddSingleton<ICalendarService>(Graph);
             services.AddSingleton<IGraphCredentialProvider, FakeCredentialProvider>();
+            if (!UseRealDraftService)
+            {
+                services.RemoveAll<IDraftService>();
+                services.AddSingleton<IDraftService>(Drafts);
+            }
+            // Even tests using the real disabled draft service must never contact a mailbox.
+            services.AddHttpClient<GraphHttpClient>().ConfigurePrimaryHttpMessageHandler(() => new RejectGraphNetworkHandler());
             services.AddTransient<IStartupFilter, TestListenerFilter>();
             services.RemoveAll<ILoggerProvider>();
             services.AddSingleton<ILoggerProvider>(new CapturingLoggerProvider(Logs));
@@ -94,6 +104,12 @@ public sealed class McpTestFactory : WebApplicationFactory<Program>
     {
         public string ConnectionGeneration => "test-generation";
         public Task<string> GetTokenAsync(bool forceRefresh, CancellationToken cancellationToken) => Task.FromResult("synthetic-token");
+    }
+
+    private sealed class RejectGraphNetworkHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected outbound Graph request in an MCP contract test.");
     }
 
     private sealed class CapturingLoggerProvider(ConcurrentQueue<string> messages) : ILoggerProvider
@@ -126,6 +142,34 @@ public sealed class McpTestFactory : WebApplicationFactory<Program>
             next(app);
         };
     }
+}
+
+public sealed class FakeDraftServices : IDraftService
+{
+    public int Calls { get; private set; }
+    public object? LastRequest { get; private set; }
+    public string? LastOperation { get; private set; }
+    public Func<object, DraftWriteState, CancellationToken, Task<DraftDto>>? Handler { get; set; }
+
+    public Task<DraftDto> CreateAsync(CreateDraftRequest request, DraftWriteState state, CancellationToken cancellationToken) => Run("create", request, state, cancellationToken);
+    public Task<DraftDto> CreateReplyAsync(ReplyDraftRequest request, DraftWriteState state, CancellationToken cancellationToken) => Run("reply", request, state, cancellationToken);
+    public Task<DraftDto> CreateReplyAllAsync(ReplyDraftRequest request, DraftWriteState state, CancellationToken cancellationToken) => Run("replyAll", request, state, cancellationToken);
+    public Task<DraftDto> CreateForwardAsync(ForwardDraftRequest request, DraftWriteState state, CancellationToken cancellationToken) => Run("forward", request, state, cancellationToken);
+    public Task<DraftDto> UpdateAsync(UpdateDraftRequest request, DraftWriteState state, CancellationToken cancellationToken) => Run("update", request, state, cancellationToken);
+
+    private Task<DraftDto> Run(string operation, object request, DraftWriteState state, CancellationToken cancellationToken)
+    {
+        Calls++;
+        LastRequest = request;
+        LastOperation = operation;
+        if (Handler is { } handler) return handler(request, state, cancellationToken);
+        state.MarkDispatched(request is UpdateDraftRequest update ? update.MessageId : null);
+        state.SetMessageId("draft-id");
+        state.MarkCommitted();
+        return Task.FromResult(SavedDraft);
+    }
+
+    public static DraftDto SavedDraft => new("draft-id", "Synthetic draft", true, [], [], [], "Synthetic preview", false, false, "protected-edit-version");
 }
 
 public sealed class FakeGraphServices : IAccountService, IMailService, ICalendarService

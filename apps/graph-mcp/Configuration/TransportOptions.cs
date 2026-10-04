@@ -7,5 +7,5 @@ public sealed class TransportOptions
     public string[] AllowedHosts { get; set; } = ["localhost", "127.0.0.1"];
     public string[] AllowedOrigins { get; set; } = [];
     public string[] KnownProxies { get; set; } = [];
-    public int MaxRequestBytes { get; set; } = 32_768;
+    public int MaxRequestBytes { get; set; } = 262_144;
 }

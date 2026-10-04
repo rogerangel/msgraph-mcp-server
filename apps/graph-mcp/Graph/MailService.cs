@@ -8,10 +8,10 @@ using Microsoft.Extensions.Options;
 
 namespace GraphMcp.Graph;
 
-public sealed class MailService(GraphHttpClient graph, GraphCursorProtector cursors, IOptions<GraphOptions> options) : IMailService
+public sealed class MailService(GraphHttpClient graph, GraphCursorProtector cursors, IOptions<GraphOptions> options, DraftEditVersionProtector editVersions) : IMailService
 {
     private readonly GraphOptions _options = options.Value;
-    private const string SummarySelect = "id,subject,sender,receivedDateTime,isRead,hasAttachments,bodyPreview";
+    private const string SummarySelect = "id,subject,sender,receivedDateTime,isRead,hasAttachments,bodyPreview,isDraft";
     private const string AttachmentSelect = "id,name,contentType,size,isInline,lastModifiedDateTime";
     private static readonly HashSet<string> Folders = ["inbox", "sentitems", "archive", "drafts", "deleteditems", "junkemail", "all"];
 
@@ -49,8 +49,9 @@ public sealed class MailService(GraphHttpClient graph, GraphCursorProtector curs
     public async Task<MailMessageDto> GetAsync(MailGetRequest request, CancellationToken cancellationToken)
     {
         var id = GraphInput.Id(request.MessageId);
+        var generation = editVersions.ConnectionGeneration;
         if (request.MaxBodyChars is < 1 || request.MaxBodyChars > _options.MaxBodyChars) throw GraphOperationException.Invalid($"maxBodyChars must be between 1 and {_options.MaxBodyChars}.");
-        using var message = await graph.GetAsync(GraphInput.Query($"me/messages/{id}", ("$select", SummarySelect + ",from,toRecipients,ccRecipients,sentDateTime,body")), cancellationToken);
+        using var message = await graph.GetAsync(GraphInput.Query($"me/messages/{id}", ("$select", SummarySelect + ",from,toRecipients,ccRecipients,bccRecipients,sentDateTime,body")), cancellationToken);
         using var attachments = await graph.GetAsync(GraphInput.Query($"me/messages/{id}/attachments", ("$select", AttachmentSelect), ("$top", "100")), cancellationToken);
         var value = message.RootElement;
         var body = value.Object("body");
@@ -58,7 +59,9 @@ public sealed class MailService(GraphHttpClient graph, GraphCursorProtector curs
         var attachmentValues = attachments.RootElement.Array("value").ToArray();
         var to = value.Array("toRecipients").ToArray();
         var cc = value.Array("ccRecipients").ToArray();
-        return new(MapSummary(value), Address(value.Object("from")), to.Take(100).Select(x => Address(x)!).ToArray(), cc.Take(100).Select(x => Address(x)!).ToArray(), value.Timestamp("sentDateTime"), normalized.Text, normalized.Truncated, attachmentValues.Take(100).Select(MapAttachment).ToArray(), attachmentValues.Length > 100 || attachments.RootElement.Text("@odata.nextLink") is not null, to.Length > 100 || cc.Length > 100);
+        var bcc = value.Bool("isDraft") ? value.Array("bccRecipients").ToArray() : [];
+        return new(MapSummary(value), Address(value.Object("from")), to.Take(100).Select(x => Address(x)!).ToArray(), cc.Take(100).Select(x => Address(x)!).ToArray(), value.Timestamp("sentDateTime"), normalized.Text, normalized.Truncated, attachmentValues.Take(100).Select(MapAttachment).ToArray(), attachmentValues.Length > 100 || attachments.RootElement.Text("@odata.nextLink") is not null, to.Length > 100 || cc.Length > 100 || bcc.Length > 100,
+            value.Bool("isDraft") ? bcc.Take(100).Select(x => Address(x)!).ToArray() : null, editVersions.Issue(value.Text("id") ?? request.MessageId, value.Text("@odata.etag"), value.Bool("isDraft"), generation));
     }
 
     public async Task<AttachmentResult> GetAttachmentAsync(AttachmentRequest request, CancellationToken cancellationToken)
@@ -100,7 +103,7 @@ public sealed class MailService(GraphHttpClient graph, GraphCursorProtector curs
         var email = recipient.Object("emailAddress");
         return email.Text("name") is null && email.Text("address") is null ? null : new(email.BoundedText("name", 256), email.BoundedText("address", 320));
     }
-    private static MailSummaryDto MapSummary(JsonElement value) => new(value.Text("id") ?? "", value.BoundedText("subject", 512), Address(value.Object("sender")), value.Timestamp("receivedDateTime"), value.Bool("isRead"), value.Bool("hasAttachments"), value.BoundedText("bodyPreview", 512));
+    private static MailSummaryDto MapSummary(JsonElement value) => new(value.Text("id") ?? "", value.BoundedText("subject", 512), Address(value.Object("sender")), value.Timestamp("receivedDateTime"), value.Bool("isRead"), value.Bool("hasAttachments"), value.BoundedText("bodyPreview", 512), value.Bool("isDraft"));
     private static AttachmentMetadataDto MapAttachment(JsonElement value)
     {
         var kind = value.Text("@odata.type") switch { "#microsoft.graph.fileAttachment" => "file", "#microsoft.graph.itemAttachment" => "item", "#microsoft.graph.referenceAttachment" => "reference", _ => "unknown" };
