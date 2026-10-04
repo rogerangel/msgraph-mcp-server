@@ -236,6 +236,21 @@ public sealed class McpContractTests
     }
 
     [Fact]
+    public async Task OperatorCspAllowsOnlySelfAndMicrosoftLoginFormDestinations()
+    {
+        using var factory = new McpTestFactory();
+        using var http = factory.CreateClient(new() { BaseAddress = new Uri("https://operator.test"), AllowAutoRedirect = false });
+        http.DefaultRequestHeaders.Add("X-Test-Local-Port", "8081");
+
+        using var response = await http.GetAsync("/operator", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var policy = Assert.Single(response.Headers.GetValues("Content-Security-Policy"));
+        // Exact policy forbids wildcard/additional destinations and retains the other restrictions.
+        Assert.Equal("default-src 'none'; form-action 'self' https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'none'", policy);
+    }
+
+    [Fact]
     public async Task OperatorRequiresHttpsAndTrustsOnlyConfiguredProxy()
     {
         using var factory = new McpTestFactory();

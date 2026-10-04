@@ -13,7 +13,8 @@ public static class OperatorEndpoints
         endpoints.MapGet("/operator", (HttpContext context, OwnerIdentityStore owner, IAntiforgery antiforgery) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+            // Browsers can apply form-action to the OIDC redirect after the local login POST.
+            context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; form-action 'self' https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'none'";
             context.Response.Headers.XContentTypeOptions = "nosniff";
             var token = WebUtility.HtmlEncode(antiforgery.GetAndStoreTokens(context).RequestToken);
             var status = owner.Connected ? "Microsoft account connected." : "Microsoft account not connected.";
