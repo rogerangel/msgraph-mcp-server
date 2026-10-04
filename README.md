@@ -19,6 +19,8 @@ See [authentication decision](docs/authentication-decision.md) and [deployment i
 
 [Implementation notes](docs/implementation-notes.md) record the dependency baseline, Graph HTTP choice, research sources and verification boundary. To run the same synthetic suite in Linux, use `docker build --target test -t graph-mcp:test .`.
 
+See the [security policy](SECURITY.md) for private vulnerability reporting and [GitHub protections](docs/github-security.md) for branch rules, CI checks and dependency scanning.
+
 ## Tools
 
 All result objects are projected DTOs, never raw Graph responses. Tool schemas describe each argument and enforce the limits below. Pagination is explicit: one Graph page per call, protected continuation cursors, no fetch-all mode.
