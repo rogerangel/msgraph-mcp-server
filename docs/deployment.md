@@ -136,7 +136,8 @@ Each event contains only fixed `Stage`, `Gate`, `Status` and `Comparison` labels
 | --- | --- |
 | `owner_identity` | `approved`, or `mismatch` with a failing comparison: `tenant`, `object`, `home-tenant`, or `home-object`. Multiple failures produce separate events. Missing claims also fail their comparison; values are never logged. This gate runs at `token_validated` and `ticket_received`. |
 | `token_acquisition` | `started`, then `succeeded` or `failed` for the acceptance-time Graph token acquisition. A failure occurs before `owner.Connect`. |
-| `graph_scopes` | `approved` or `mismatch` for the exact approved scope set, without listing the returned scopes. |
+| `graph_scopes` | `approved` when all three required Graph scopes are present, otherwise `mismatch`; returned scope names and token contents are never logged. OIDC scopes do not affect this check. |
+| `graph_additional_scopes` | `present` or `absent` for additional Graph scopes reported by MSAL, excluding OIDC scopes. This is informational and does not reject authentication or expand service capabilities. Scope names and values are never logged. |
 | `home_account` | `approved` or `mismatch` for the expected MSAL home-account ID, without logging either ID. |
 | `owner_persistence` | `started`, then `succeeded` or `failed` around `owner.Connect` and protected owner-state persistence. |
 | `acceptance` | `succeeded` at the end of ticket acceptance, or `failed` when the remote-failure handler runs. |

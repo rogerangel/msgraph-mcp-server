@@ -195,10 +195,11 @@ public static class GraphAuthenticationExtensions
                 return;
             }
             OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "token_acquisition", "succeeded");
-            var scopesApproved = GraphScopes.AreExactlyApproved(result.Scopes);
+            var scopesApproved = GraphScopes.ContainsRequiredScopes(result.Scopes, out var hasAdditionalScopes);
             var homeAccountApproved = string.Equals(result.Account?.HomeAccountId.Identifier,
                 microsoft.ExpectedHomeAccountId, StringComparison.OrdinalIgnoreCase);
             OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "graph_scopes", scopesApproved ? "approved" : "mismatch");
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "graph_additional_scopes", hasAdditionalScopes ? "present" : "absent");
             OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "home_account", homeAccountApproved ? "approved" : "mismatch");
             if (!scopesApproved || !homeAccountApproved)
             {

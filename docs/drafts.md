@@ -1,6 +1,6 @@
 # Phase 1.5: unsent mail drafts
 
-This phase adds four native draft-creation operations and one separately gated existing-draft update. It does not send, delete or move mail. Delegated Graph permissions are exactly `User.Read`, `Mail.ReadWrite`, `Calendars.Read`; `Mail.ReadWrite` replaces the former `Mail.Read` grant. The permission is broader than draft writing, so explicit routes, field allowlists, draft preflight and version checks enforce the narrower service behavior.
+This phase adds four native draft-creation operations and one separately gated existing-draft update. It does not send, delete or move mail. Requested delegated Graph permissions are exactly `User.Read`, `Mail.ReadWrite`, `Calendars.Read`; `Mail.ReadWrite` replaces the former `Mail.Read` grant. Authentication requires these scopes and accepts additional previously consented Graph scopes in the token result. Explicit routes, field allowlists, draft preflight and version checks enforce the narrower service behavior regardless of additional token scopes.
 
 ## Tool inputs
 

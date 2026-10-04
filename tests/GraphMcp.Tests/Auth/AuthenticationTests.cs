@@ -133,17 +133,27 @@ public sealed class AuthenticationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("User.Read Mail.ReadWrite Calendars.Read", true)]
-    [InlineData("User.Read Mail.ReadWrite Calendars.Read openid profile offline_access", true)]
-    [InlineData("https://graph.microsoft.com/User.Read Mail.ReadWrite Calendars.Read", true)]
-    [InlineData("User.Read Mail.ReadWrite", false)]
-    [InlineData("User.Read Mail.Read Calendars.Read", false)]
-    [InlineData("User.Read Mail.Read Calendars.Read Mail.ReadWrite", false)]
-    [InlineData("User.Read Mail.ReadWrite Calendars.Read Mail.Send", false)]
-    [InlineData("User.Read Mail.ReadWrite Calendars.Read Calendars.ReadWrite", false)]
-    [InlineData("User.Read Mail.ReadWrite Calendars.Read https://another.example/User.Read", false)]
-    public void Token_scope_set_must_be_exact(string scopes, bool expected) =>
-        Assert.Equal(expected, GraphScopes.AreExactlyApproved(scopes.Split(' ')));
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read", true, false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read openid profile offline_access email", true, false)]
+    [InlineData("https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.Read", true, false)]
+    [InlineData("HTTPS://GRAPH.MICROSOFT.COM/user.read MAIL.READWRITE calendars.read OPENID PROFILE OFFLINE_ACCESS EMAIL", true, false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read User.Read https://graph.microsoft.com/Mail.ReadWrite", true, false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read Mail.Read", true, true)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read Mail.Send", true, true)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read https://graph.microsoft.com/Calendars.ReadWrite", true, true)]
+    [InlineData("Mail.ReadWrite Calendars.Read", false, false)]
+    [InlineData("User.Read Calendars.Read", false, false)]
+    [InlineData("User.Read Mail.ReadWrite", false, false)]
+    [InlineData("User.Read Mail.Read Calendars.Read", false, true)]
+    [InlineData("openid profile offline_access email", false, false)]
+    [InlineData("Mail.ReadWrite Calendars.Read https://another.example/User.Read", false, true)]
+    [InlineData("User.Read Calendars.Read https://graph.microsoft.com.evil.example/Mail.ReadWrite", false, true)]
+    public void Token_scopes_must_contain_required_graph_scopes(string scopes, bool accepted, bool hasAdditionalScopes)
+    {
+        Assert.Equal(accepted, GraphScopes.ContainsRequiredScopes(scopes.Split(' ')));
+        Assert.Equal(accepted, GraphScopes.ContainsRequiredScopes(scopes.Split(' '), out var actualAdditionalScopes));
+        Assert.Equal(hasAdditionalScopes, actualAdditionalScopes);
+    }
 
     [Theory]
     [InlineData("https://operator.example", true)]
@@ -168,13 +178,40 @@ public sealed class AuthenticationTests : IDisposable
         Assert.True(proxy.Options!.ForceRefresh);
         Assert.Equal(cancellation.Token, proxy.Options.CancellationToken);
         Assert.Equal(_microsoft.ExpectedHomeAccountId, proxy.Principal!.GetMsalAccountId());
+        Assert.Equal(new[] { "User.Read", "Mail.ReadWrite", "Calendars.Read" }, proxy.RequestedScopes);
         proxy.Result = Result([.. GraphScopes.Required, "Mail.Send"]);
-        Assert.Equal("authentication_required", (await Assert.ThrowsAsync<GraphAuthenticationException>(() => provider.GetTokenAsync(false, TestContext.Current.CancellationToken))).Code);
+        Assert.Equal("synthetic-access-token", await provider.GetTokenAsync(false, TestContext.Current.CancellationToken));
+        Assert.Equal(new[] { "User.Read", "Mail.ReadWrite", "Calendars.Read" }, proxy.RequestedScopes);
         proxy.Error = new MsalUiRequiredException("test", "sensitive detail");
         var error = await Assert.ThrowsAsync<GraphAuthenticationException>(() => provider.GetTokenAsync(false, TestContext.Current.CancellationToken));
         Assert.DoesNotContain("sensitive", error.ToString());
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => provider.GetTokenAsync(false, cancellation.Token));
+    }
+
+    [Theory]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read", true)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read Mail.Read Mail.Send", true)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read openid profile offline_access email", true)]
+    [InlineData("Mail.ReadWrite Calendars.Read", false)]
+    [InlineData("User.Read Calendars.Read", false)]
+    [InlineData("User.Read Mail.ReadWrite", false)]
+    public async Task Silent_token_acquisition_checks_required_scopes_without_requesting_extras(string scopes, bool accepted)
+    {
+        using var owner = Owner();
+        owner.Connect(Principal());
+        var tokens = DispatchProxy.Create<ITokenAcquisition, TokenProxy>();
+        var proxy = (TokenProxy)tokens;
+        proxy.Result = Result(scopes.Split(' '));
+        var provider = new GraphCredentialProvider(tokens, owner, Options.Create(_microsoft));
+
+        if (accepted)
+            Assert.Equal("synthetic-access-token", await provider.GetTokenAsync(false, TestContext.Current.CancellationToken));
+        else
+            Assert.Equal("authentication_required", (await Assert.ThrowsAsync<GraphAuthenticationException>(
+                () => provider.GetTokenAsync(false, TestContext.Current.CancellationToken))).Code);
+
+        Assert.Equal(new[] { "User.Read", "Mail.ReadWrite", "Calendars.Read" }, proxy.RequestedScopes);
     }
 
     [Fact]
@@ -276,11 +313,13 @@ public sealed class AuthenticationTests : IDisposable
         public Exception? Error { get; set; }
         public TokenAcquisitionOptions? Options { get; private set; }
         public ClaimsPrincipal? Principal { get; private set; }
+        public string[]? RequestedScopes { get; private set; }
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
             if (method!.Name != "GetAuthenticationResultForUserAsync") throw new NotSupportedException();
             Principal = args!.OfType<ClaimsPrincipal>().Single();
             Options = args!.OfType<TokenAcquisitionOptions>().Single();
+            RequestedScopes = args!.OfType<IEnumerable<string>>().Single().ToArray();
             if (Error is not null) return Task.FromException<AuthenticationResult>(Error);
             return Pending ?? Task.FromResult(Result!);
         }

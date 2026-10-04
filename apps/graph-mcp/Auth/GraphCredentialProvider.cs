@@ -24,7 +24,7 @@ public sealed class GraphCredentialProvider(ITokenAcquisition tokens, OwnerIdent
                     CancellationToken = cancellationToken
                 });
             cancellationToken.ThrowIfCancellationRequested();
-            if (!GraphScopes.AreExactlyApproved(result.Scopes)
+            if (!GraphScopes.ContainsRequiredScopes(result.Scopes)
                 || !string.Equals(result.Account?.HomeAccountId.Identifier, microsoft.Value.ExpectedHomeAccountId, StringComparison.OrdinalIgnoreCase))
                 throw new GraphAuthenticationException("authentication_required");
             return result.AccessToken;

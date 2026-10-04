@@ -2,7 +2,7 @@
 
 A single-account Microsoft Graph MCP server for Microsoft 365 Business. Runs on .NET 10 and exposes fourteen tools through stateless MCP Streamable HTTP at `/mcp`: nine account/mail/calendar read tools and five narrowly constrained mail-draft tools. Tailscale Aperture owns agent identity and connector grants.
 
-Graph delegated permissions are exactly **User.Read**, **Mail.ReadWrite**, and **Calendars.Read**. `Mail.ReadWrite` replaces `Mail.Read` for Phase 1.5 draft support. There is no `Mail.Send`, application permission, generic API tool, Work IQ dependency, or Copilot Credits requirement. Although the Microsoft permission includes broader mailbox actions, code permits only the specific draft operations described below; sending, deletion, moving messages and calendar writes remain unavailable.
+The service requests exactly these Graph delegated permissions: **User.Read**, **Mail.ReadWrite**, and **Calendars.Read**. `Mail.ReadWrite` replaces `Mail.Read` for Phase 1.5 draft support. It does not request `Mail.Send` or application permissions, and has no generic API tool, Work IQ dependency, or Copilot Credits requirement. Authentication requires all three Graph scopes; additional previously consented Graph scopes in Microsoft's token result do not cause rejection. The hard-coded Graph endpoint/method allowlist and tool surface enforce the service's capabilities; sending, deletion, moving messages and calendar writes remain unavailable.
 
 ## Build and test
 

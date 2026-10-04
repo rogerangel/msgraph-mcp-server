@@ -67,20 +67,60 @@ public sealed class CallbackDiagnosticTests
         fixture.AssertSafeLogs();
     }
 
-    [Fact]
-    public async Task Exact_scope_mismatch_is_distinct_and_does_not_log_scope_contents()
+    [Theory]
+    [InlineData("User.Read")]
+    [InlineData("Mail.ReadWrite")]
+    [InlineData("Calendars.Read")]
+    public async Task Missing_required_scope_is_distinct_and_does_not_log_scope_contents(string missingScope)
     {
         using var fixture = new CallbackFixture();
-        fixture.Tokens.Result = fixture.AuthenticationResult([.. GraphScopes.Required, "poison-extra-scope"]);
+        fixture.Tokens.Result = fixture.AuthenticationResult([
+            .. GraphScopes.Required.Where(scope => scope != missingScope), "poison-extra-scope"]);
 
         var failure = await fixture.Invoke("ticket_received", fixture.Principal());
 
         Assert.NotNull(failure);
         fixture.AssertDiagnostic("ticket_received", "graph_scopes", "mismatch");
+        fixture.AssertDiagnostic("ticket_received", "graph_additional_scopes", "present");
         Assert.DoesNotContain(fixture.Diagnostics, entry => entry.Field("Gate") == "owner_persistence");
         Assert.Equal(1, fixture.Tokens.Calls);
         Assert.False(fixture.Owner.Connected);
         Assert.False(File.Exists(fixture.OwnerPath));
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
+    [InlineData("Mail.Read")]
+    [InlineData("Mail.Send")]
+    [InlineData("https://graph.microsoft.com/Calendars.ReadWrite")]
+    [InlineData("poison-extra-scope")]
+    public async Task Additional_scopes_are_accepted_without_logging_their_contents(string additionalScope)
+    {
+        using var fixture = new CallbackFixture();
+        fixture.Tokens.Result = fixture.AuthenticationResult([.. GraphScopes.Required, additionalScope]);
+
+        Assert.Null(await fixture.Invoke("ticket_received", fixture.Principal()));
+
+        fixture.AssertDiagnostic("ticket_received", "graph_scopes", "approved");
+        fixture.AssertDiagnostic("ticket_received", "graph_additional_scopes", "present");
+        fixture.AssertDiagnostic("ticket_received", "owner_persistence", "succeeded");
+        Assert.True(fixture.Owner.Connected);
+        Assert.True(File.Exists(fixture.OwnerPath));
+        fixture.AssertSafeLogs();
+    }
+
+    [Fact]
+    public async Task Oidc_scopes_do_not_count_as_additional_graph_scopes_or_leak_into_logs()
+    {
+        using var fixture = new CallbackFixture();
+        fixture.Tokens.Result = fixture.AuthenticationResult([
+            .. GraphScopes.Required, "openid", "profile", "offline_access", "email"]);
+
+        Assert.Null(await fixture.Invoke("ticket_received", fixture.Principal()));
+
+        fixture.AssertDiagnostic("ticket_received", "graph_scopes", "approved");
+        fixture.AssertDiagnostic("ticket_received", "graph_additional_scopes", "absent");
+        Assert.True(fixture.Owner.Connected);
         fixture.AssertSafeLogs();
     }
 
@@ -129,6 +169,7 @@ public sealed class CallbackDiagnosticTests
 
         Assert.NotNull(failure);
         fixture.AssertDiagnostic("ticket_received", "graph_scopes", "approved");
+        fixture.AssertDiagnostic("ticket_received", "graph_additional_scopes", "absent");
         fixture.AssertDiagnostic("ticket_received", "home_account", "approved");
         fixture.AssertDiagnostic("ticket_received", "owner_persistence", "failed");
         Assert.False(fixture.Owner.Connected);
@@ -149,6 +190,7 @@ public sealed class CallbackDiagnosticTests
         fixture.AssertDiagnostic("ticket_received", "owner_identity", "approved");
         fixture.AssertDiagnostic("ticket_received", "token_acquisition", "succeeded");
         fixture.AssertDiagnostic("ticket_received", "graph_scopes", "approved");
+        fixture.AssertDiagnostic("ticket_received", "graph_additional_scopes", "absent");
         fixture.AssertDiagnostic("ticket_received", "home_account", "approved");
         fixture.AssertDiagnostic("ticket_received", "owner_persistence", "succeeded");
         fixture.AssertDiagnostic("ticket_received", "acceptance", "succeeded");
@@ -245,7 +287,8 @@ public sealed class CallbackDiagnosticTests
             "poison-certificate-material", "poison-owner-file-path", "poison-extra-scope", "poison-mailbox-body",
             _microsoft.TenantId, _microsoft.ClientId, _microsoft.ExpectedUserObjectId, _microsoft.ExpectedHomeAccountId,
             WrongIdentifier, WrongHomeAccount, Owner.Generation,
-            "Mail.ReadWrite", "Mail.Send", "Calendars.Read", "User.Read", "offline_access", .. _certificateMaterial
+            "Mail.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.Read", "Calendars.ReadWrite", "User.Read",
+            "openid", "profile", "offline_access", "email", "https://graph.microsoft.com/", .. _certificateMaterial
         ];
 
         public CallbackFixture(Action<OpenIdConnectOptions>? configure = null)
@@ -361,8 +404,8 @@ public sealed class CallbackDiagnosticTests
                 Assert.Equal(new[] { "Comparison", "Gate", "Stage", "Status", "{OriginalFormat}" },
                     entry.Fields.Select(field => field.Key).Order(StringComparer.Ordinal));
                 Assert.Contains(entry.Field("Stage"), new[] { "token_validated", "ticket_received", "remote_failure" });
-                Assert.Contains(entry.Field("Gate"), new[] { "owner_identity", "graph_scopes", "home_account", "token_acquisition", "owner_persistence", "acceptance", "preceding_handler" });
-                Assert.Contains(entry.Field("Status"), new[] { "approved", "mismatch", "started", "succeeded", "failed", "stopped" });
+                Assert.Contains(entry.Field("Gate"), new[] { "owner_identity", "graph_scopes", "graph_additional_scopes", "home_account", "token_acquisition", "owner_persistence", "acceptance", "preceding_handler" });
+                Assert.Contains(entry.Field("Status"), new[] { "approved", "mismatch", "present", "absent", "started", "succeeded", "failed", "stopped" });
                 Assert.Contains(entry.Field("Comparison"), new[] { "tenant", "object", "home-tenant", "home-object", "none" });
                 Assert.All(entry.Fields, field => Assert.IsType<string>(field.Value));
             }
