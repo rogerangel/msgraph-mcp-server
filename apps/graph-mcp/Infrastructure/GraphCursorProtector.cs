@@ -52,13 +52,16 @@ public sealed class GraphCursorProtector(IDataProtectionProvider protection, IGr
     {
         if (nextUrl.Length > 16_384) throw new GraphOperationException("pagination_unavailable", "The pagination cursor exceeds the allowed size. Narrow the query.");
         var step = "initial_route";
+        var folderKeyComparison = "not_applicable";
         try
         {
             var initial = GraphHttpClient.ValidateUrl(HttpMethod.Get, initialUrl);
             step = "continuation_route";
+            folderKeyComparison = ContinuationFolderKeyComparison(initial, nextUrl);
             var next = GraphHttpClient.ValidateUrl(HttpMethod.Get, nextUrl);
             step = "path_binding";
-            if (initial.AbsolutePath != next.AbsolutePath) throw new GraphOperationException("invalid_upstream_response", "An invalid pagination route was rejected.");
+            if (GraphHttpClient.CanonicalReadPath(initial) != GraphHttpClient.CanonicalReadPath(next))
+                throw new GraphOperationException("invalid_upstream_response", "An invalid pagination route was rejected.");
             step = "query_binding";
             var expected = QueryHelpers.ParseQuery(initial.Query);
             var actual = QueryHelpers.ParseQuery(next.Query);
@@ -68,15 +71,29 @@ public sealed class GraphCursorProtector(IDataProtectionProvider protection, IGr
             foreach (var pair in actual)
                 if ((!expected.ContainsKey(pair.Key) && !pair.Key.Equals("$skip", StringComparison.OrdinalIgnoreCase) && !pair.Key.Equals("$skiptoken", StringComparison.OrdinalIgnoreCase)) || pair.Value.Count != 1)
                     throw new GraphOperationException("invalid_upstream_response", "An invalid pagination query was rejected.");
+            if (folderKeyComparison == "same_approved_alias")
+                logger.LogInformation(new EventId(4201, "GraphContinuationAccepted"),
+                    "Graph continuation validation accepted; folder key comparison {FolderKeyComparison}", folderKeyComparison);
         }
         catch (GraphOperationException error)
         {
             // Only fixed labels: a continuation can contain private IDs and opaque paging tokens.
             logger.LogWarning(new EventId(4200, "GraphContinuationRejected"),
-                "Graph continuation rejected at {ValidationStep}; route shape {RouteShape}; outcome {Outcome}",
-                step, ContinuationRouteShape(nextUrl), error.Code);
+                "Graph continuation rejected at {ValidationStep}; route shape {RouteShape}; folder key comparison {FolderKeyComparison}; outcome {Outcome}",
+                step, ContinuationRouteShape(nextUrl), folderKeyComparison, error.Code);
             throw;
         }
+    }
+
+    private static string ContinuationFolderKeyComparison(Uri initial, string nextUrl)
+    {
+        if (!Uri.TryCreate(nextUrl, UriKind.Absolute, out var next)
+            || !next.AbsolutePath.StartsWith("/v1.0/me/mailFolders(", StringComparison.OrdinalIgnoreCase)) return "not_applicable";
+        // Classify only; origin, route, and query validation still determine acceptance.
+        // Unrecognized selectors/forms never expose their value or imply an ID mapping.
+        var canonical = GraphHttpClient.CanonicalReadPath(next);
+        if (canonical == next.AbsolutePath) return "unsupported_key";
+        return canonical == GraphHttpClient.CanonicalReadPath(initial) ? "same_approved_alias" : "different_approved_alias";
     }
 
     private static string ContinuationRouteShape(string url)

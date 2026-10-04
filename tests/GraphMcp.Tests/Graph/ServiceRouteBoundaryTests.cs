@@ -39,18 +39,25 @@ public sealed class ServiceRouteBoundaryTests
     }
 
     [Fact]
-    public async Task InboxParenthesizedContinuationIsRejectedAfterInitialGraphRequest()
+    public async Task InboxParenthesizedContinuationPassesOnlyOnExplicitNextPageRequest()
     {
         using var fixture = Fixture(Get("/v1.0/me/mailFolders/inbox/messages",
             """{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/me/mailFolders('inbox')/messages?%24select=id%2Csubject%2Csender%2CreceivedDateTime%2CisRead%2ChasAttachments%2CbodyPreview%2CisDraft&%24top=5&%24orderby=receivedDateTime%20desc&%24skip=5"}""",
-            ("$select", SummarySelect), ("$top", "5"), ("$orderby", "receivedDateTime desc")));
+            ("$select", SummarySelect), ("$top", "5"), ("$orderby", "receivedDateTime desc")),
+            Get("/v1.0/me/mailFolders('inbox')/messages", """{"value":[]}""",
+                ("$select", SummarySelect), ("$top", "5"), ("$orderby", "receivedDateTime desc"), ("$skip", "5")));
 
-        var error = await Assert.ThrowsAsync<GraphOperationException>(() => fixture.Mail.ListAsync(
-            new() { Folder = "inbox", PageSize = 5 }, TestContext.Current.CancellationToken));
+        var request = new MailListRequest { Folder = "inbox", PageSize = 5 };
+        var first = await fixture.Mail.ListAsync(request, TestContext.Current.CancellationToken);
 
-        Assert.Equal("operation_not_allowed", error.Code);
+        Assert.NotNull(first.NextCursor);
         Assert.Single(fixture.Handler.Requests);
         Assert.Single(fixture.Credentials.Refreshes);
+        var second = await fixture.Mail.ListAsync(request with { Cursor = first.NextCursor }, TestContext.Current.CancellationToken);
+
+        Assert.Null(second.NextCursor);
+        Assert.Equal(2, fixture.Handler.Requests.Count);
+        Assert.Equal(2, fixture.Credentials.Refreshes.Count);
     }
 
     [Fact]

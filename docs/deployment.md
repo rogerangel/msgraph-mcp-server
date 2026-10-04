@@ -153,6 +153,8 @@ Back up encrypted `/data` separately from its wrapping private key. Encryption d
 
 The hard-coded Graph origin is `https://graph.microsoft.com/v1.0`. There is no alternate endpoint setting, redirect following, or generic request API.
 
+Mail-folder continuations may use Microsoft's equivalent `/me/mailFolders('<wellKnown>')/messages` spelling for the six approved folders. Validation compares its canonical resource identity with the initial request; the complete returned URL and opaque pagination query are carried forward unchanged. This does not permit additional folders, methods, resource families, or arbitrary OData aliases. Safe event 4200 classifies rejected selectors; event 4201 confirms validation of a matching approved alias without exposing its value. Verify both the initial page and explicit cursor consumption after deployment. See [pagination validation and diagnostic command](implementation-notes.md#pagination-validation).
+
 | Operation | Allowed route | Scope |
 | --- | --- | --- |
 | Account | `GET /me` | `User.Read` |

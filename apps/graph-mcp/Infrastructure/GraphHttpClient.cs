@@ -19,6 +19,7 @@ public sealed partial class GraphHttpClient(HttpClient http, IGraphCredentialPro
     private readonly GraphOptions _options = options.Value;
     internal static readonly Uri Origin = new("https://graph.microsoft.com/v1.0/");
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly string[] ApprovedMailFolderAliases = ["inbox", "sentitems", "archive", "drafts", "deleteditems", "junkemail"];
 
     public async Task<JsonDocument> GetAsync(string relativeUrl, CancellationToken cancellationToken)
         => await ReadJsonAsync(HttpMethod.Get, relativeUrl, null, cancellationToken);
@@ -42,11 +43,28 @@ public sealed partial class GraphHttpClient(HttpClient http, IGraphCredentialPro
         if (uri.Scheme != "https" || uri.Host != Origin.Host || uri.Port != 443 || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
             throw new GraphOperationException("invalid_upstream_response", "An invalid Microsoft Graph URL was rejected.");
         var path = uri.AbsolutePath;
-        var isRead = method == HttpMethod.Get && AllowedGetPath().IsMatch(path);
+        var isRead = method == HttpMethod.Get && AllowedGetPath().IsMatch(CanonicalReadPath(uri));
         var isSchedule = method == HttpMethod.Post && path == "/v1.0/me/calendar/getSchedule" && uri.Query.Length == 0;
         if (!isRead && !isSchedule)
             throw new GraphOperationException("operation_not_allowed", "This Microsoft Graph operation is not permitted.");
         return uri;
+    }
+
+    internal static string CanonicalReadPath(Uri uri)
+    {
+        // Compare Microsoft's documented key-predicate spelling as the same resource.
+        // This is not a general OData parser: only the six already approved folders
+        // and their messages collection qualify. Never rewrite the URI or its query.
+        var path = uri.AbsolutePath;
+        const string prefix = "/v1.0/me/mailFolders('";
+        const string suffix = "')/messages";
+        if (!path.StartsWith(prefix, StringComparison.Ordinal) || !path.EndsWith(suffix, StringComparison.Ordinal)
+            || path.Length <= prefix.Length + suffix.Length) return path;
+        var candidate = path[prefix.Length..^suffix.Length];
+        foreach (var alias in ApprovedMailFolderAliases)
+            if (candidate.Equals(alias, StringComparison.OrdinalIgnoreCase))
+                return "/v1.0/me/mailFolders/" + alias + "/messages";
+        return path;
     }
 
     [GeneratedRegex("^/v1\\.0/me(?:/messages(?:/[^/]+(?:/attachments(?:/[^/]+(?:/\\$value)?)?)?)?|/mailFolders/(?:inbox|sentitems|archive|drafts|deleteditems|junkemail)/messages|/calendars(?:/[^/]+(?:/calendarView|/events/[^/]+)?)?|/calendar(?:/calendarView|/events/[^/]+))?$")]
