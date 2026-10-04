@@ -1,6 +1,6 @@
 # Single-account delegated Microsoft authentication
 
-Decision: use Microsoft's ASP.NET Core OIDC handler, Microsoft.Identity.Web and MSAL with authorization code + PKCE. This is a confidential server client authenticated with a mounted certificate, not an application-permission Graph client. The delegated Graph scope set is fixed in code: `User.Read`, `Mail.Read`, `Calendars.Read`. OIDC uses `openid`, `profile`, `offline_access`; no `.default`, device-code fallback, client-credentials acquisition, Work IQ or Copilot Credits.
+Decision: use Microsoft's ASP.NET Core OIDC handler, Microsoft.Identity.Web and MSAL with authorization code + PKCE. This is a confidential server client authenticated with a mounted certificate, not an application-permission Graph client. The Phase 1.5 delegated Graph scope set is fixed in code: `User.Read`, `Mail.ReadWrite`, `Calendars.Read`. `Mail.ReadWrite` replaces `Mail.Read`; `Mail.Send` is not requested. OIDC uses `openid`, `profile`, `offline_access`; no `.default`, device-code fallback, client-credentials acquisition, Work IQ or Copilot Credits.
 
 Device code is supported for public clients and avoids a callback and client credential, but organizations may block it and Microsoft recommends restricting it. A desktop public-client PKCE helper would require a separate provisioning/cache-transfer workflow. OBO requires a delegated Entra assertion from an upstream API client, which Aperture does not supply here. Managed identity and client credentials do not provide the delegated mailbox access required. A protected server credential and private browser callback are the smallest supported fit for this deployment.
 
@@ -11,6 +11,14 @@ Create a dedicated, single-tenant Entra registration; disable implicit grants an
 `Authentication:OperatorBaseUrl` is an external HTTPS **origin**, for example `https://operator.example.ts.net` or `https://operator.example.ts.net:9443`. Register that exact origin plus `/operator/signin-oidc` as a **Web** redirect. There is no required external port. Both the OIDC challenge and MSAL code redemption use this configured URL. Keep the internal MCP/operator listeners separate, and use Tailscale grants to keep agents/Aperture off the operator listener. Reverse proxies must preserve the `/operator` path and trust only the configured forwarding proxy.
 
 The operator page has antiforgery-protected login and disconnect forms. Microsoft middleware validates state, nonce, code and tokens; the application pins both tenant/local user IDs and MSAL home IDs. The service releases a Graph access token only when MSAL reports exactly the approved resource scopes, including cached results. Tokens remain opaque. No account, token or caller identity supplied by an MCP client selects the Microsoft account.
+
+### Phase 1.5 consent migration
+
+Existing Phase 1 consent and cached tokens use `Mail.Read`. Change the dedicated registration to `User.Read`, `Mail.ReadWrite`, `Calendars.Read`, remove the redundant `Mail.Read` permission, and have the tenant/user administrator replace stale consent as required by tenant policy. Editing the registration's requested-permissions list alone may leave old delegated grants in place. Tokens reporting both `Mail.Read` and `Mail.ReadWrite`, an old read-only token, or any additional resource scope are rejected. Do not relax the exact-scope guard to accommodate stale consent.
+
+Disconnect through the operator interface, then reconnect interactively and approve the new delegated grant. If operator login is unavailable, follow the stopped-service protected-state removal procedure below. Keep the wrapping certificate/key ring; the persistent MSAL/Data Protection design is unchanged. No migration process automatically logs in, calls the real mailbox, or obtains consent.
+
+`Mail.ReadWrite` authorizes more actions at Microsoft than this service exposes. Its inclusion is necessary for the four draft-creation operations and limited draft updates; service code still rejects sending, deletion, moving messages, arbitrary message mutation and generic Graph requests. There is no narrower Microsoft delegated permission for draft-only writing. The separate `Drafts:EnableUpdates` gate is an application rollout control, not another OAuth scope; draft creation and existing reads remain independent of that gate. See the [production update prerequisite](deployment.md#enable-draft-updates-separately).
 
 ## Persistent cache and lifecycle
 

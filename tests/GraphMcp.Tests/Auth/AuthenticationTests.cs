@@ -133,13 +133,15 @@ public sealed class AuthenticationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("User.Read Mail.Read Calendars.Read", true)]
-    [InlineData("User.Read Mail.Read Calendars.Read openid profile offline_access", true)]
-    [InlineData("https://graph.microsoft.com/User.Read Mail.Read Calendars.Read", true)]
-    [InlineData("User.Read Mail.Read", false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read", true)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read openid profile offline_access", true)]
+    [InlineData("https://graph.microsoft.com/User.Read Mail.ReadWrite Calendars.Read", true)]
+    [InlineData("User.Read Mail.ReadWrite", false)]
+    [InlineData("User.Read Mail.Read Calendars.Read", false)]
     [InlineData("User.Read Mail.Read Calendars.Read Mail.ReadWrite", false)]
-    [InlineData("User.Read Mail.Read Calendars.Read Mail.Send", false)]
-    [InlineData("User.Read Mail.Read Calendars.Read https://another.example/User.Read", false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read Mail.Send", false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read Calendars.ReadWrite", false)]
+    [InlineData("User.Read Mail.ReadWrite Calendars.Read https://another.example/User.Read", false)]
     public void Token_scope_set_must_be_exact(string scopes, bool expected) =>
         Assert.Equal(expected, GraphScopes.AreExactlyApproved(scopes.Split(' ')));
 
@@ -224,7 +226,7 @@ public sealed class AuthenticationTests : IDisposable
         Assert.Equal("code", oidc.ResponseType);
         Assert.True(oidc.UsePkce);
         Assert.False(oidc.SaveTokens);
-        Assert.Equal(new[] { "Calendars.Read", "Mail.Read", "User.Read", "offline_access", "openid", "profile" }, oidc.Scope.Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(new[] { "Calendars.Read", "Mail.ReadWrite", "User.Read", "offline_access", "openid", "profile" }, oidc.Scope.Order(StringComparer.Ordinal).ToArray());
         var msal = container.GetRequiredService<IOptionsMonitor<ConfidentialClientApplicationOptions>>().Get(GraphAuthenticationExtensions.OidcScheme);
         Assert.Equal("https://operator.example:9443/operator/signin-oidc", msal.RedirectUri);
 

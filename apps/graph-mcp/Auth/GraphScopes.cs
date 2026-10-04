@@ -2,7 +2,7 @@ namespace GraphMcp.Auth;
 
 public static class GraphScopes
 {
-    public static readonly string[] Required = ["User.Read", "Mail.Read", "Calendars.Read"];
+    public static readonly string[] Required = ["User.Read", "Mail.ReadWrite", "Calendars.Read"];
 
     // MSAL can report OIDC scopes alongside resource scopes. No other resource is permitted.
     public static bool AreExactlyApproved(IEnumerable<string> scopes)

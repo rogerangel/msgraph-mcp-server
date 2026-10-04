@@ -18,13 +18,13 @@ public static partial class ToolSchemas
     {
         var registered = tools.ToArray();
         if (registered.Length != Schemas.Count || registered.Select(x => x.ProtocolTool.Name).Distinct().Count() != Schemas.Count)
-            throw new InvalidOperationException("Exactly the nine approved tools must be registered.");
+            throw new InvalidOperationException("Exactly the approved tools must be registered.");
         foreach (var tool in registered)
             tool.ProtocolTool.InputSchema = Schemas.TryGetValue(tool.ProtocolTool.Name, out var schema)
                 ? schema : throw new InvalidOperationException("An unapproved tool was registered.");
     }
 
-    public static void Validate(string name, IDictionary<string, JsonElement>? arguments, GraphOptions options)
+    public static void Validate(string name, IDictionary<string, JsonElement>? arguments, GraphOptions options, DraftOptions? drafts = null)
     {
         if (!Schemas.TryGetValue(name, out var schema)) throw GraphOperationException.Invalid("Unknown tool.");
         var properties = schema.GetProperty("properties");
@@ -57,6 +57,18 @@ public static partial class ToolSchemas
             && arguments.TryGetValue("receivedBefore", out var before)
             && Instant(before.GetString()!) <= Instant(after.GetString()!))
             throw GraphOperationException.Invalid("receivedBefore must follow receivedAfter.");
+        if (name is "mail_create_draft" or "mail_create_reply_draft" or "mail_create_reply_all_draft" or "mail_create_forward_draft" or "mail_update_draft")
+        {
+            drafts ??= new DraftOptions();
+            if (arguments.TryGetValue("bodyText", out var content) && content.GetString()!.Length > drafts.MaxBodyChars)
+                throw GraphOperationException.Invalid("Draft bodyText exceeds the configured character limit.");
+            var explicitRecipients = new[] { "toRecipients", "ccRecipients", "bccRecipients" }
+                .Sum(key => arguments.TryGetValue(key, out var recipients) ? recipients.GetArrayLength() : 0);
+            if (explicitRecipients > drafts.MaxRecipients)
+                throw GraphOperationException.Invalid("The explicit recipient count exceeds the configured limit.");
+            if (name == "mail_update_draft" && !new[] { "subject", "bodyText", "toRecipients", "ccRecipients", "bccRecipients" }.Any(arguments.ContainsKey))
+                throw GraphOperationException.Invalid("Supply at least one draft field to update.");
+        }
     }
 
     public static DateTimeOffset? OptionalInstant(string? value) => value is null ? null : Instant(value);
@@ -76,8 +88,10 @@ public static partial class ToolSchemas
             case "string":
                 if (value.ValueKind != JsonValueKind.String) throw Invalid(key);
                 var text = value.GetString()!;
-                if (string.IsNullOrWhiteSpace(text) || text.Any(char.IsControl)
-                    || text.Length < field.GetProperty("minLength").GetInt32()
+                var minimumLength = field.GetProperty("minLength").GetInt32();
+                if ((minimumLength > 0 && string.IsNullOrWhiteSpace(text))
+                    || text.Any(character => char.IsControl(character) && !(key == "bodyText" && character is '\r' or '\n' or '\t'))
+                    || text.Length < minimumLength
                     || text.Length > field.GetProperty("maxLength").GetInt32()) throw Invalid(key);
                 if (field.TryGetProperty("format", out var format))
                 {
@@ -92,7 +106,8 @@ public static partial class ToolSchemas
                     || number > field.GetProperty("maximum").GetInt32()) throw Invalid(key);
                 break;
             case "array":
-                if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > field.GetProperty("maxItems").GetInt32()) throw Invalid(key);
+                if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > field.GetProperty("maxItems").GetInt32()
+                    || (field.TryGetProperty("minItems", out var minimumItems) && value.GetArrayLength() < minimumItems.GetInt32())) throw Invalid(key);
                 foreach (var item in value.EnumerateArray()) ValidateValue(key, item, field.GetProperty("items"));
                 break;
             default: throw new InvalidOperationException("Unsupported input contract type.");
@@ -137,7 +152,17 @@ public static partial class ToolSchemas
                 ("end", Time("Range end after start; maximum seven elapsed days.")),
                 ("additionalSchedules", new JsonObject { ["type"] = "array", ["maxItems"] = 9, ["items"] = Email(), ["default"] = new JsonArray(), ["description"] = "Up to nine explicit SMTP addresses; the connected account is always included." }),
                 ("intervalMinutes", new JsonObject { ["type"] = "integer", ["minimum"] = 15, ["maximum"] = 60, ["enum"] = new JsonArray(15, 30, 60), ["default"] = 30, ["description"] = "Minutes per free/busy slot." }),
-                ("timeZone", Zone()))
+                ("timeZone", Zone())),
+            ["mail_create_draft"] = Schema(["subject", "bodyText"], ("subject", Text(512, "Nonblank draft subject; no control characters.")),
+                ("bodyText", DraftBody()), ("toRecipients", Recipients()), ("ccRecipients", Recipients()), ("bccRecipients", Recipients())),
+            ["mail_create_reply_draft"] = Schema(["messageId", "bodyText"], ("messageId", Id()), ("bodyText", DraftBody())),
+            ["mail_create_reply_all_draft"] = Schema(["messageId", "bodyText"], ("messageId", Id()), ("bodyText", DraftBody())),
+            ["mail_create_forward_draft"] = Schema(["messageId", "bodyText", "toRecipients"], ("messageId", Id()),
+                ("bodyText", DraftBody()), ("toRecipients", Recipients(minimum: 1))),
+            ["mail_update_draft"] = Schema(["messageId", "editVersion"], ("messageId", Id()),
+                ("editVersion", Text(16_384, "Opaque current version returned by mail_get or a draft result for this same draft; expires after 30 minutes.")),
+                ("subject", ClearableText(512, "Replacement subject. Empty clears it; omit to preserve. Null is rejected.")),
+                ("bodyText", DraftBody()), ("toRecipients", Recipients()), ("ccRecipients", Recipients()), ("bccRecipients", Recipients()))
         };
     }
 
@@ -178,4 +203,17 @@ public static partial class ToolSchemas
         schema["format"] = "email";
         return schema;
     }
+    private static JsonObject ClearableText(int maximum, string description)
+    {
+        var schema = Text(maximum, description);
+        schema["minLength"] = 0;
+        return schema;
+    }
+    private static JsonObject DraftBody() => ClearableText(20_000,
+        "Literal plain-text content, at most 20000 characters or the configured lower limit. Newlines/tabs are allowed. Empty clears/creates an empty body. For updates this replaces the entire body; omit to preserve.");
+    private static JsonObject Recipients(int minimum = 0) => new()
+    {
+        ["type"] = "array", ["minItems"] = minimum, ["maxItems"] = 20, ["items"] = Email(),
+        ["description"] = "SMTP addresses only, no display names. At most 20 explicitly supplied addresses across To/Cc/Bcc, or a configured lower limit. For updates, this replaces the list; empty clears it and omission preserves it."
+    };
 }

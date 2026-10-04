@@ -20,6 +20,9 @@ services:
       Authentication__OperatorBaseUrl: "${OPERATOR_BASE_URL:?Set external operator HTTPS origin}"
       Authentication__ClientCertificatePath: /run/secrets/entra-client.pfx
       Authentication__DataProtectionCertificatePath: /run/secrets/cache-protection.pfx
+      # This gates only updates. Four draft-creation tools remain independent.
+      # Enable only after the explicit production stale-ETag/If-Match validation in docs/deployment.md.
+      Drafts__EnableUpdates: "${DRAFT_UPDATES_ENABLED:-false}"
       Transport__AllowedHosts__0: localhost
       Transport__AllowedHosts__1: 127.0.0.1
       Transport__AllowedHosts__2: "${MCP_HOSTNAME:?Set backend MCP hostname}"

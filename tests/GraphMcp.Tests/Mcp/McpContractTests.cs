@@ -16,7 +16,8 @@ public sealed class McpContractTests
         await using var client = await factory.ConnectAsync();
         var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
         string[] expected = ["account_me", "mail_list", "mail_search", "mail_get", "mail_get_attachment",
-            "calendar_list", "calendar_events", "calendar_get_event", "calendar_availability"];
+            "calendar_list", "calendar_events", "calendar_get_event", "calendar_availability",
+            "mail_create_draft", "mail_create_reply_draft", "mail_create_reply_all_draft", "mail_create_forward_draft", "mail_update_draft"];
         Assert.Equal(expected.Order(), tools.Select(tool => tool.Name).Order());
         foreach (var tool in tools)
         {
@@ -24,9 +25,10 @@ public sealed class McpContractTests
             Assert.False(string.IsNullOrWhiteSpace(descriptor.Description));
             Assert.NotNull(descriptor.OutputSchema);
             Assert.False(descriptor.InputSchema.GetProperty("additionalProperties").GetBoolean());
-            Assert.True(descriptor.Annotations!.ReadOnlyHint);
-            Assert.False(descriptor.Annotations.DestructiveHint);
-            Assert.True(descriptor.Annotations.IdempotentHint);
+            var write = descriptor.Name.StartsWith("mail_create_", StringComparison.Ordinal) || descriptor.Name == "mail_update_draft";
+            Assert.Equal(!write, descriptor.Annotations!.ReadOnlyHint);
+            Assert.Equal(descriptor.Name == "mail_update_draft", descriptor.Annotations.DestructiveHint);
+            Assert.Equal(!write, descriptor.Annotations.IdempotentHint);
             Assert.True(descriptor.Annotations.OpenWorldHint);
             Assert.False(descriptor.InputSchema.GetProperty("properties").TryGetProperty("context", out _));
         }

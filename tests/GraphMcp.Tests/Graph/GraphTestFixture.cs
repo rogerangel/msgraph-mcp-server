@@ -45,6 +45,7 @@ internal sealed class GraphTestFixture : IDisposable
     public GraphOptions Options { get; }
     public GraphHttpClient Client { get; }
     public GraphCursorProtector Cursors { get; }
+    public DraftEditVersionProtector EditVersions { get; }
     public IDataProtectionProvider Protection { get; } = new EphemeralDataProtectionProvider();
     public MailService Mail { get; }
     public CalendarService Calendar { get; }
@@ -56,7 +57,8 @@ internal sealed class GraphTestFixture : IDisposable
         _http = new(Handler);
         Client = new(_http, Credentials, Microsoft.Extensions.Options.Options.Create(Options), new GraphConcurrencyGate(Microsoft.Extensions.Options.Options.Create(Options)), NullLogger<GraphHttpClient>.Instance);
         Cursors = new(Protection, Credentials, Microsoft.Extensions.Options.Options.Create(new MicrosoftOptions { ExpectedUserObjectId = "owner-id" }));
-        Mail = new(Client, Cursors, Microsoft.Extensions.Options.Options.Create(Options));
+        EditVersions = new(Protection, Credentials, Microsoft.Extensions.Options.Options.Create(new MicrosoftOptions { TenantId = "tenant-id", ExpectedUserObjectId = "owner-id" }));
+        Mail = new(Client, Cursors, Microsoft.Extensions.Options.Options.Create(Options), EditVersions);
         Calendar = new(Client, new FakeAccount(), Cursors, Microsoft.Extensions.Options.Options.Create(Options));
     }
     public static HttpResponseMessage Json(string value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(value, Encoding.UTF8, "application/json") };

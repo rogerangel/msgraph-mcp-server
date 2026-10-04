@@ -4,6 +4,7 @@ using System.Text.Json;
 using GraphMcp.Auth;
 using GraphMcp.Configuration;
 using GraphMcp.Infrastructure;
+using GraphMcp.Models;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -11,7 +12,7 @@ using ModelContextProtocol.Server;
 namespace GraphMcp.Tools;
 
 /// <summary>Bounds and observes tool execution without recording arguments or results.</summary>
-public sealed class ToolExecutor(ILogger<ToolExecutor> logger, IOptions<GraphOptions> options)
+public sealed class ToolExecutor(ILogger<ToolExecutor> logger, IOptions<GraphOptions> options, IOptions<DraftOptions> drafts)
 {
     public const int MaxResultBytes = 1_048_576;
     public int DefaultPageSize => Math.Min(20, options.Value.MaxPageSize);
@@ -33,7 +34,7 @@ public sealed class ToolExecutor(ILogger<ToolExecutor> logger, IOptions<GraphOpt
         logger.LogInformation("Tool {Tool} invoked; correlation {CorrelationId}", name, correlationId);
         try
         {
-            ToolSchemas.Validate(name, context.Params.Arguments, options.Value);
+            ToolSchemas.Validate(name, context.Params.Arguments, options.Value, drafts.Value);
             deadline.Token.ThrowIfCancellationRequested();
             var value = await operation(deadline.Token).ConfigureAwait(false);
             deadline.Token.ThrowIfCancellationRequested();
@@ -82,6 +83,71 @@ public sealed class ToolExecutor(ILogger<ToolExecutor> logger, IOptions<GraphOpt
             logger.LogInformation("Tool {Tool} completed with {Outcome} in {DurationMs} ms; correlation {CorrelationId}",
                 name, outcome, elapsed, correlationId);
         }
+    }
+
+    public async Task<CallToolResult> ExecuteWriteAsync(string name, RequestContext<CallToolRequestParams> context,
+        Func<DraftWriteState, CancellationToken, Task<DraftDto>> operation, CancellationToken cancellationToken)
+    {
+        // Local to this invocation, including when multiple calls share a request scope.
+        var state = new DraftWriteState();
+        var correlationId = Guid.NewGuid().ToString("N");
+        using var activity = Activities.StartActivity(name);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.Value.ToolTimeoutSeconds, 1, 45)));
+        var started = Stopwatch.GetTimestamp();
+        logger.LogInformation("Tool {Tool} invoked; correlation {CorrelationId}", name, correlationId);
+        DraftWriteReceipt receipt;
+        try
+        {
+            ToolSchemas.Validate(name, context.Params.Arguments, options.Value, drafts.Value);
+            deadline.Token.ThrowIfCancellationRequested();
+            var draft = await operation(state, deadline.Token).ConfigureAwait(false);
+            // A timeout or disconnect after confirmed commit must not turn it into a retryable failure.
+            receipt = state.ToReceipt(draft);
+        }
+        catch (GraphOperationException error) { receipt = state.ToReceipt(error: error); }
+        catch (GraphAuthenticationException error)
+        {
+            receipt = state.ToReceipt(error: new GraphOperationException(error.Code, error.Message));
+        }
+        catch (OperationCanceledException)
+        {
+            receipt = state.ToReceipt(error: new GraphOperationException(
+                cancellationToken.IsCancellationRequested ? "cancelled" : "upstream_timeout",
+                "The operation was cancelled or exceeded its time limit before a confirmed result."));
+        }
+        catch (Exception)
+        {
+            receipt = state.ToReceipt(error: new GraphOperationException("operation_failed", "The draft operation could not be completed."));
+        }
+
+        try
+        {
+            var result = WriteResult(receipt);
+            if (JsonSerializer.SerializeToUtf8Bytes(result, JsonOptions).Length <= MaxResultBytes) return result;
+        }
+        catch (Exception)
+        {
+            // Projection/serialization failure must preserve committed/unknown status, never prompt replay.
+        }
+        finally
+        {
+            var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            Duration.Record(elapsed, new KeyValuePair<string, object?>("tool", name), new("outcome", state.Outcome));
+            logger.LogInformation("Tool {Tool} completed with {Outcome} in {DurationMs} ms; correlation {CorrelationId}",
+                name, state.Outcome, elapsed, correlationId);
+        }
+        return WriteResult(state.ToReceipt(error: new GraphOperationException("response_too_large", "Draft result details could not be returned.")));
+    }
+
+    private static CallToolResult WriteResult(DraftWriteReceipt receipt)
+    {
+        var structured = JsonSerializer.SerializeToElement(receipt, JsonOptions);
+        return new CallToolResult
+        {
+            IsError = receipt.Outcome != "committed", StructuredContent = structured,
+            Content = [new TextContentBlock { Text = structured.GetRawText() }]
+        };
     }
 
     private static CallToolResult Error(string code, string message, string correlationId, int? retryAfterSeconds = null)
