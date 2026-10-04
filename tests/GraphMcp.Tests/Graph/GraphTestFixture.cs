@@ -6,6 +6,7 @@ using GraphMcp.Graph;
 using GraphMcp.Infrastructure;
 using GraphMcp.Models;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -50,13 +51,15 @@ internal sealed class GraphTestFixture : IDisposable
     public MailService Mail { get; }
     public CalendarService Calendar { get; }
     private readonly HttpClient _http;
-    public GraphTestFixture(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler, GraphOptions? options = null)
+    public GraphTestFixture(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler,
+        GraphOptions? options = null, ILogger<GraphCursorProtector>? cursorLogger = null)
     {
         Options = options ?? new GraphOptions { MaxRetries = 0 };
         Handler = new(handler);
         _http = new(Handler);
         Client = new(_http, Credentials, Microsoft.Extensions.Options.Options.Create(Options), new GraphConcurrencyGate(Microsoft.Extensions.Options.Options.Create(Options)), NullLogger<GraphHttpClient>.Instance);
-        Cursors = new(Protection, Credentials, Microsoft.Extensions.Options.Options.Create(new MicrosoftOptions { ExpectedUserObjectId = "owner-id" }));
+        Cursors = new(Protection, Credentials, Microsoft.Extensions.Options.Options.Create(new MicrosoftOptions { ExpectedUserObjectId = "owner-id" }),
+            cursorLogger ?? NullLogger<GraphCursorProtector>.Instance);
         EditVersions = new(Protection, Credentials, Microsoft.Extensions.Options.Options.Create(new MicrosoftOptions { TenantId = "tenant-id", ExpectedUserObjectId = "owner-id" }));
         Mail = new(Client, Cursors, Microsoft.Extensions.Options.Options.Create(Options), EditVersions);
         Calendar = new(Client, new FakeAccount(), Cursors, Microsoft.Extensions.Options.Options.Create(Options));

@@ -39,3 +39,18 @@ The useful lessons here are to make the effective permission/tool mapping inspec
 ## Verification boundary
 
 The tests cover actual SDK discovery/calls over Streamable HTTP, fake Graph responses and resilience, protected state restart, account/scope pinning, operator/MCP separation, safe failure responses and draft write boundaries/receipts. They do not prove tenant consent, Conditional Access, actual Exchange sharing, live `If-Match` enforcement, or a particular installed Aperture release. Those checks are documented as explicit deployment checks in [deployment.md](deployment.md). Failed or incomplete live conditional-write validation leaves only `mail_update_draft` gated off; it does not block the four native creation tools.
+
+## Pagination investigation
+
+Live logs confirm that the reported `mail_list` request reaches Graph successfully and then fails while validating its continuation. The exact returned route spelling has not yet been identified. Boundary tests exercise the real service URLs, including their queries, plus calendar-list and default/owned-calendar-view pagination; synthetic alternate spellings do not prove the live response shape.
+
+- Microsoft requires preserving the complete, opaque `@odata.nextLink` URL for the next request. It does not promise identical path spelling. [Pagination guidance](https://learn.microsoft.com/en-us/graph/best-practices-concept#pagination)
+- Parenthesized well-known mail folders are documented, for example `/me/mailFolders('SentItems')/messages`. `/me` also identifies the same user as `/users/{signed-in-user-id}`. These documented alternatives do not establish which form this deployment received. [Mail overview](https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview?view=graph-rest-1.0), [user aliases](https://learn.microsoft.com/en-us/graph/api/resources/users?view=graph-rest-1.0)
+- Calendar listing and both default and owned calendar views are supported operations; calendar-view responses can include continuation links. The documentation does not specify their literal canonical spelling. [List calendars](https://learn.microsoft.com/en-us/graph/api/user-list-calendars?view=graph-rest-1.0), [calendar-view paging](https://learn.microsoft.com/en-us/graph/api/calendar-list-calendarview?view=graph-rest-1.0#response)
+- Delegated `Calendars.Read` covers the current calendar listing, view, individual-event and `POST /me/calendar/getSchedule` operations for a work/school account; no extra permission is required. Event times default to UTC, consistent with the service's local conversion to the requested output timezone. `getSchedule` is a free/busy read despite its POST method. [Get event](https://learn.microsoft.com/en-us/graph/api/event-get?view=graph-rest-1.0), [getSchedule](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0)
+
+Event **4200** (`GraphContinuationRejected`) reports only fixed `ValidationStep`, `RouteShape`, and `Outcome` labels. It logs no URLs, IDs, query values, or paging tokens and does not authorize or rewrite routes. After deployment, reproduce the failure and inspect this event before changing continuation acceptance:
+
+```bash
+docker compose -f compose.example.yaml logs --since=10m graph-mcp 2>&1 | grep -E '"EventId":4200|"Id":4200|GraphContinuationRejected'
+```

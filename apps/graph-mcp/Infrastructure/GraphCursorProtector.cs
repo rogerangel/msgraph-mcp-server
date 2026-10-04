@@ -9,7 +9,8 @@ using Microsoft.Extensions.Options;
 
 namespace GraphMcp.Infrastructure;
 
-public sealed class GraphCursorProtector(IDataProtectionProvider protection, IGraphCredentialProvider credentials, IOptions<MicrosoftOptions> microsoft)
+public sealed class GraphCursorProtector(IDataProtectionProvider protection, IGraphCredentialProvider credentials,
+    IOptions<MicrosoftOptions> microsoft, ILogger<GraphCursorProtector> logger)
 {
     private readonly IDataProtector _protector = protection.CreateProtector("GraphMcp.Pagination.v1");
     internal sealed record PageContext(string InitialUrl, string CurrentUrl, string Binding, string Generation, DateTimeOffset Expires, int Page, int Seen);
@@ -47,19 +48,52 @@ public sealed class GraphCursorProtector(IDataProtectionProvider protection, IGr
         return (cursor, false);
     }
 
-    private static void ValidateContinuation(string initialUrl, string nextUrl)
+    private void ValidateContinuation(string initialUrl, string nextUrl)
     {
         if (nextUrl.Length > 16_384) throw new GraphOperationException("pagination_unavailable", "The pagination cursor exceeds the allowed size. Narrow the query.");
-        var initial = GraphHttpClient.ValidateUrl(HttpMethod.Get, initialUrl);
-        var next = GraphHttpClient.ValidateUrl(HttpMethod.Get, nextUrl);
-        if (initial.AbsolutePath != next.AbsolutePath) throw new GraphOperationException("invalid_upstream_response", "An invalid pagination route was rejected.");
-        var expected = QueryHelpers.ParseQuery(initial.Query);
-        var actual = QueryHelpers.ParseQuery(next.Query);
-        foreach (var pair in expected)
-            if (!actual.TryGetValue(pair.Key, out var value) || pair.Value.Count != 1 || value.Count != 1 || pair.Value[0] != value[0])
-                throw new GraphOperationException("invalid_upstream_response", "An invalid pagination query was rejected.");
-        foreach (var pair in actual)
-            if ((!expected.ContainsKey(pair.Key) && !pair.Key.Equals("$skip", StringComparison.OrdinalIgnoreCase) && !pair.Key.Equals("$skiptoken", StringComparison.OrdinalIgnoreCase)) || pair.Value.Count != 1)
-                throw new GraphOperationException("invalid_upstream_response", "An invalid pagination query was rejected.");
+        var step = "initial_route";
+        try
+        {
+            var initial = GraphHttpClient.ValidateUrl(HttpMethod.Get, initialUrl);
+            step = "continuation_route";
+            var next = GraphHttpClient.ValidateUrl(HttpMethod.Get, nextUrl);
+            step = "path_binding";
+            if (initial.AbsolutePath != next.AbsolutePath) throw new GraphOperationException("invalid_upstream_response", "An invalid pagination route was rejected.");
+            step = "query_binding";
+            var expected = QueryHelpers.ParseQuery(initial.Query);
+            var actual = QueryHelpers.ParseQuery(next.Query);
+            foreach (var pair in expected)
+                if (!actual.TryGetValue(pair.Key, out var value) || pair.Value.Count != 1 || value.Count != 1 || pair.Value[0] != value[0])
+                    throw new GraphOperationException("invalid_upstream_response", "An invalid pagination query was rejected.");
+            foreach (var pair in actual)
+                if ((!expected.ContainsKey(pair.Key) && !pair.Key.Equals("$skip", StringComparison.OrdinalIgnoreCase) && !pair.Key.Equals("$skiptoken", StringComparison.OrdinalIgnoreCase)) || pair.Value.Count != 1)
+                    throw new GraphOperationException("invalid_upstream_response", "An invalid pagination query was rejected.");
+        }
+        catch (GraphOperationException error)
+        {
+            // Only fixed labels: a continuation can contain private IDs and opaque paging tokens.
+            logger.LogWarning(new EventId(4200, "GraphContinuationRejected"),
+                "Graph continuation rejected at {ValidationStep}; route shape {RouteShape}; outcome {Outcome}",
+                step, ContinuationRouteShape(nextUrl), error.Code);
+            throw;
+        }
+    }
+
+    private static string ContinuationRouteShape(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return "relative_or_invalid";
+        var path = uri.AbsolutePath;
+        // These classifications diagnose spelling only; they never authorize or rewrite a route.
+        if (path.StartsWith("/v1.0/me/mailFolders(", StringComparison.OrdinalIgnoreCase)) return "me_mail_folder_key_predicate";
+        if (path.StartsWith("/v1.0/me/mailFolders/", StringComparison.OrdinalIgnoreCase)) return "me_mail_folder_segment";
+        if (path.StartsWith("/v1.0/me/calendars(", StringComparison.OrdinalIgnoreCase)) return "me_calendar_key_predicate";
+        if (path.StartsWith("/v1.0/me/calendars/", StringComparison.OrdinalIgnoreCase)) return "me_calendar_segment";
+        if (path.Equals("/v1.0/me/calendars", StringComparison.OrdinalIgnoreCase)) return "me_calendars";
+        if (path.StartsWith("/v1.0/me/calendar/", StringComparison.OrdinalIgnoreCase)) return "me_default_calendar";
+        if (path.Equals("/v1.0/me/calendarView", StringComparison.OrdinalIgnoreCase)) return "me_calendar_view_alias";
+        if (path.StartsWith("/v1.0/users(", StringComparison.OrdinalIgnoreCase)) return "user_key_predicate";
+        if (path.StartsWith("/v1.0/users/", StringComparison.OrdinalIgnoreCase)) return "user_segment";
+        if (path.Equals("/v1.0/me/messages", StringComparison.OrdinalIgnoreCase)) return "me_messages";
+        return "other";
     }
 }
