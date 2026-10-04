@@ -8,7 +8,7 @@ Changes to `main` require a pull request, passing required GitHub Actions checks
 
 The required `test` check runs locked NuGet restore, Release build, the synthetic test suite and a Docker build. Keep this job name stable, or update the ruleset together with a job rename. Actions are pinned to verified commit SHAs; Dependabot proposes updates. Checkout does not persist credentials, and workflow tokens default to read-only without permission to approve pull requests.
 
-The dependency-review workflow rejects newly introduced high or critical dependency vulnerabilities, including development dependencies. It has no write token or pull-request comment permission. It does not impose a license policy.
+The required `dependency-review` check rejects newly introduced high or critical dependency vulnerabilities, including development dependencies. It has no write token or pull-request comment permission. It does not impose a license policy. Both named checks are bound to the GitHub Actions app as their expected source.
 
 The repository currently has one writer, so pull requests require zero additional approving reviews. This allows the maintainer to merge their own work after checks pass. When a second regular reviewer is available, consider requiring one approval and approval of the latest push. Changes to GitHub settings require administrative access; these files do not grant it.
 
@@ -16,7 +16,7 @@ The repository currently has one writer, so pull requests require zero additiona
 
 - Secret scanning and push protection are enabled.
 - Dependabot alerts and security update pull requests are enabled. Weekly version updates cover NuGet, GitHub Actions and Docker; updates are not automatically merged.
-- CodeQL default setup analyzes C# and GitHub Actions. It is managed in GitHub's code-scanning settings rather than a second checked-in CodeQL workflow.
+- CodeQL default setup analyzes C# and GitHub Actions on supported push/pull-request events and a weekly schedule. The ruleset requires CodeQL results and blocks qualifying code-scanning errors and high/critical security findings. It is managed in GitHub's code-scanning settings rather than a second checked-in CodeQL workflow.
 - Private vulnerability reporting is enabled. Follow [SECURITY.md](../SECURITY.md) for safe reports.
 - Only GitHub-owned actions are allowed. All external contributors require maintainer approval before fork pull-request workflows run. Review workflow and build-script changes before approving execution.
 

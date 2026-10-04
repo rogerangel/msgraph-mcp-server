@@ -27,7 +27,20 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "test", "integration_id": 15368 }
+          { "context": "test", "integration_id": 15368 },
+          { "context": "dependency-review", "integration_id": 15368 }
+        ]
+      }
+    },
+    {
+      "type": "code_scanning",
+      "parameters": {
+        "code_scanning_tools": [
+          {
+            "tool": "CodeQL",
+            "alerts_threshold": "errors",
+            "security_alerts_threshold": "high_or_higher"
+          }
         ]
       }
     }
