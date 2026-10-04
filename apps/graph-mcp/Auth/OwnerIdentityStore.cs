@@ -45,11 +45,24 @@ public sealed class OwnerIdentityStore : IDisposable
         }
     }
 
-    public bool IsExpectedOwner(ClaimsPrincipal? principal) => principal is not null
-        && string.Equals(principal.GetTenantId(), _microsoft.TenantId, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(principal.GetObjectId(), _microsoft.ExpectedUserObjectId, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(principal.GetHomeTenantId(), _microsoft.TenantId, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(principal.GetHomeObjectId(), _microsoft.ExpectedUserObjectId, StringComparison.OrdinalIgnoreCase);
+    public bool IsExpectedOwner(ClaimsPrincipal? principal) => GetIdentityMismatch(principal) == OwnerIdentityMismatch.None;
+
+    // Share the acceptance comparisons with diagnostics; never return identity values for logging.
+    internal OwnerIdentityMismatch GetIdentityMismatch(ClaimsPrincipal? principal)
+    {
+        if (principal is null) return OwnerIdentityMismatch.Tenant | OwnerIdentityMismatch.Object
+            | OwnerIdentityMismatch.HomeTenant | OwnerIdentityMismatch.HomeObject;
+        var mismatch = OwnerIdentityMismatch.None;
+        if (!string.Equals(principal.GetTenantId(), _microsoft.TenantId, StringComparison.OrdinalIgnoreCase))
+            mismatch |= OwnerIdentityMismatch.Tenant;
+        if (!string.Equals(principal.GetObjectId(), _microsoft.ExpectedUserObjectId, StringComparison.OrdinalIgnoreCase))
+            mismatch |= OwnerIdentityMismatch.Object;
+        if (!string.Equals(principal.GetHomeTenantId(), _microsoft.TenantId, StringComparison.OrdinalIgnoreCase))
+            mismatch |= OwnerIdentityMismatch.HomeTenant;
+        if (!string.Equals(principal.GetHomeObjectId(), _microsoft.ExpectedUserObjectId, StringComparison.OrdinalIgnoreCase))
+            mismatch |= OwnerIdentityMismatch.HomeObject;
+        return mismatch;
+    }
 
     public ClaimsPrincipal GetPrincipal()
     {
@@ -88,4 +101,14 @@ public sealed class OwnerIdentityStore : IDisposable
     }
 
     private sealed record OwnerState(bool Connected, string Generation);
+}
+
+[Flags]
+internal enum OwnerIdentityMismatch
+{
+    None = 0,
+    Tenant = 1,
+    Object = 2,
+    HomeTenant = 4,
+    HomeObject = 8
 }

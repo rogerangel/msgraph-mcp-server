@@ -136,44 +136,114 @@ public static class GraphAuthenticationExtensions
         var validated = options.Events.OnTokenValidated;
         options.Events.OnTokenValidated = async context =>
         {
-            await validated(context);
-            if (!context.HttpContext.RequestServices.GetRequiredService<OwnerIdentityStore>().IsExpectedOwner(context.Principal))
+            try { await validated(context); }
+            catch (Exception)
+            {
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "token_validated", "preceding_handler", "failed");
+                context.Fail("Microsoft login could not be accepted.");
+                return;
+            }
+            if (context.Result is not null)
+            {
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "token_validated", "preceding_handler",
+                    context.Result.Failure is null ? "stopped" : "failed");
+                if (context.Result.Failure is not null) context.Fail("Microsoft login could not be accepted.");
+                return;
+            }
+            var owner = context.HttpContext.RequestServices.GetRequiredService<OwnerIdentityStore>();
+            if (!OidcAcceptanceDiagnostics.CheckOwner(context.HttpContext, owner, context.Principal, "token_validated"))
                 context.Fail("Only the configured Microsoft account can connect.");
         };
 
         var ticket = options.Events.OnTicketReceived;
         options.Events.OnTicketReceived = async context =>
         {
-            await ticket(context);
-            var owner = context.HttpContext.RequestServices.GetRequiredService<OwnerIdentityStore>();
-            if (!owner.IsExpectedOwner(context.Principal)) { context.Fail("Account rejected."); return; }
-            var acquisition = context.HttpContext.RequestServices.GetRequiredService<ITokenAcquisition>();
-            var result = await acquisition.GetAuthenticationResultForUserAsync(GraphScopes.Required,
-                authenticationScheme: OidcScheme, tenantId: microsoft.TenantId, user: context.Principal,
-                tokenAcquisitionOptions: new TokenAcquisitionOptions { CancellationToken = context.HttpContext.RequestAborted });
-            if (!GraphScopes.AreExactlyApproved(result.Scopes)
-                || !string.Equals(result.Account?.HomeAccountId.Identifier, microsoft.ExpectedHomeAccountId, StringComparison.OrdinalIgnoreCase))
+            try { await ticket(context); }
+            catch (Exception)
             {
-                context.Fail("The account's granted permissions do not match this service.");
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "preceding_handler", "failed");
+                await RejectTicketAsync(context);
                 return;
             }
-            owner.Connect(context.Principal!);
+            if (context.Result is not null)
+            {
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "preceding_handler",
+                    context.Result.Failure is null ? "stopped" : "failed");
+                if (context.Result.Failure is not null) await RejectTicketAsync(context);
+                return;
+            }
+            var owner = context.HttpContext.RequestServices.GetRequiredService<OwnerIdentityStore>();
+            if (!OidcAcceptanceDiagnostics.CheckOwner(context.HttpContext, owner, context.Principal, "ticket_received"))
+            {
+                await RejectTicketAsync(context);
+                return;
+            }
+            Microsoft.Identity.Client.AuthenticationResult result;
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "token_acquisition", "started");
+            try
+            {
+                var acquisition = context.HttpContext.RequestServices.GetRequiredService<ITokenAcquisition>();
+                result = await acquisition.GetAuthenticationResultForUserAsync(GraphScopes.Required,
+                    authenticationScheme: OidcScheme, tenantId: microsoft.TenantId, user: context.Principal,
+                    tokenAcquisitionOptions: new TokenAcquisitionOptions { CancellationToken = context.HttpContext.RequestAborted });
+            }
+            catch (Exception)
+            {
+                // Exception text/properties can contain credentials or identifiers. Record only this gate.
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "token_acquisition", "failed");
+                await RejectTicketAsync(context);
+                return;
+            }
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "token_acquisition", "succeeded");
+            var scopesApproved = GraphScopes.AreExactlyApproved(result.Scopes);
+            var homeAccountApproved = string.Equals(result.Account?.HomeAccountId.Identifier,
+                microsoft.ExpectedHomeAccountId, StringComparison.OrdinalIgnoreCase);
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "graph_scopes", scopesApproved ? "approved" : "mismatch");
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "home_account", homeAccountApproved ? "approved" : "mismatch");
+            if (!scopesApproved || !homeAccountApproved)
+            {
+                await RejectTicketAsync(context);
+                return;
+            }
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "owner_persistence", "started");
+            try { owner.Connect(context.Principal!); }
+            catch (Exception)
+            {
+                OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "owner_persistence", "failed");
+                await RejectTicketAsync(context);
+                return;
+            }
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "owner_persistence", "succeeded");
             ((ClaimsIdentity)context.Principal!.Identity!).AddClaim(new Claim(OwnerIdentityStore.GenerationClaim, owner.Generation));
             context.ReturnUri = "/operator";
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "ticket_received", "acceptance", "succeeded");
         };
 
         options.Events.OnRemoteFailure = async context =>
         {
+            OidcAcceptanceDiagnostics.Write(context.HttpContext, "remote_failure", "acceptance", "failed");
             context.HandleResponse();
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.ContentType = "text/plain";
-            await context.Response.WriteAsync("Microsoft login failed. Start a new login from the operator page.");
+            await WriteLoginFailureAsync(context.HttpContext);
         };
         options.Events.OnAuthenticationFailed = context =>
         {
             // OnRemoteFailure handles the safe response; raw protocol/MSAL exception details never become HTTP output.
             return Task.CompletedTask;
         };
+    }
+
+    private static Task RejectTicketAsync(TicketReceivedContext context)
+    {
+        // TicketReceived runs outside remote-failure handling. Fail() alone does not stop cookie sign-in.
+        context.HandleResponse();
+        return WriteLoginFailureAsync(context.HttpContext);
+    }
+
+    private static Task WriteLoginFailureAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.ContentType = "text/plain";
+        return context.Response.WriteAsync("Microsoft login failed. Start a new login from the operator page.");
     }
 
     // Call after the terminal MCP listener branch. Authentication must never run on MCP traffic.

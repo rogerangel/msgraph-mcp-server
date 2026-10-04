@@ -126,6 +126,26 @@ The service uses silent acquisition after connection and refreshes through MSAL.
 
 Disconnect clears the protected user cache and invalidates local connection state/cookies/cursors. It is not Microsoft-wide token revocation. To revoke access at Microsoft, use the user's or tenant administrator's Entra controls and remove consent as appropriate. Do not add Graph session-revocation permissions.
 
+### Diagnose callback acceptance
+
+A written MSAL cache does not establish a connected owner. Microsoft.Identity.Web can persist the token cache before the application's owner, scope, home-account and owner-state checks finish. If `/operator` remains disconnected and `owner.bin` is absent, inspect the structured events from category `GraphMcp.Auth.OidcAcceptanceDiagnostics`, event ID `4100` (`OidcAcceptanceGate`).
+
+Each event contains only fixed `Stage`, `Gate`, `Status` and `Comparison` labels:
+
+| Gate | Diagnostic meaning |
+| --- | --- |
+| `owner_identity` | `approved`, or `mismatch` with a failing comparison: `tenant`, `object`, `home-tenant`, or `home-object`. Multiple failures produce separate events. Missing claims also fail their comparison; values are never logged. This gate runs at `token_validated` and `ticket_received`. |
+| `token_acquisition` | `started`, then `succeeded` or `failed` for the acceptance-time Graph token acquisition. A failure occurs before `owner.Connect`. |
+| `graph_scopes` | `approved` or `mismatch` for the exact approved scope set, without listing the returned scopes. |
+| `home_account` | `approved` or `mismatch` for the expected MSAL home-account ID, without logging either ID. |
+| `owner_persistence` | `started`, then `succeeded` or `failed` around `owner.Connect` and protected owner-state persistence. |
+| `acceptance` | `succeeded` at the end of ticket acceptance, or `failed` when the remote-failure handler runs. |
+| `preceding_handler` | `failed` or `stopped` when an earlier Microsoft authentication event handler prevents application acceptance. The application does not continue after that result. |
+
+The normal post-token stage is `ticket_received`; `Comparison` is `none` except for failed owner comparisons. These events deliberately omit exception text/objects, identity values, returned scope strings, authentication material and request data. Keep the existing production category filter instead of enabling verbose Microsoft/IdentityModel logging. Share only these safe gate events when diagnosing a failed connection.
+
+Rejected ticket acceptance explicitly stops cookie sign-in and returns the same generic HTTP 401 login-failure response used by the remote-failure handler. The detailed reason stays in the fixed-label application events. No acceptance check is relaxed by diagnostics.
+
 Back up encrypted `/data` separately from its wrapping private key. Encryption does not protect a compromised running process with access to both mounts. Keep host permissions restrictive and logs private. Certificate expiration/rotation and Conditional Access changes require operational attention; see the authentication decision for rotation behavior.
 
 ## Graph operation matrix
