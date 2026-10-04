@@ -5,6 +5,8 @@
 .env*
 data
 secrets
+**/msal-cache.bin
+**/owner.bin
 **/*.pfx
 **/*.p12
 **/*.key
