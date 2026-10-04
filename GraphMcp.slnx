@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/apps/">
+    <Project Path="apps/graph-mcp/GraphMcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GraphMcp.Tests/GraphMcp.Tests.csproj" />
+  </Folder>
+</Solution>

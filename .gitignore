@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/TestResults/
+.vs/
+.idea/
+.DS_Store
+.env
+.env.*
+!.env.example
+data/
+secrets/
+*.pfx
+*.p12
+*.key
+*.pem
+*.user
+.artifacts/

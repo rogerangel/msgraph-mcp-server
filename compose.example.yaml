@@ -1,0 +1,41 @@
+services:
+  graph-mcp:
+    build: .
+    image: graph-mcp:local
+    restart: unless-stopped
+    user: "1654:1654"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+    environment:
+      Microsoft__TenantId: "${MICROSOFT_TENANT_ID:?Set tenant ID}"
+      Microsoft__ClientId: "${MICROSOFT_CLIENT_ID:?Set client ID}"
+      Microsoft__ExpectedUserObjectId: "${MICROSOFT_USER_OBJECT_ID:?Set owner object ID}"
+      Authentication__OperatorBaseUrl: "${OPERATOR_BASE_URL:?Set external operator HTTPS origin}"
+      Authentication__ClientCertificatePath: /run/secrets/entra-client.pfx
+      Authentication__DataProtectionCertificatePath: /run/secrets/cache-protection.pfx
+      Transport__AllowedHosts__0: localhost
+      Transport__AllowedHosts__1: 127.0.0.1
+      Transport__AllowedHosts__2: "${MCP_HOSTNAME:?Set backend MCP hostname}"
+      # Host-side Tailscale Serve reaches this container through the bridge gateway.
+      Transport__KnownProxies__0: 172.30.99.1
+    volumes:
+      - ./data:/data
+      - ./secrets/entra-client.pfx:/run/secrets/entra-client.pfx:ro
+      - ./secrets/cache-protection.pfx:/run/secrets/cache-protection.pfx:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks: [backend]
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.99.0/24
+          gateway: 172.30.99.1

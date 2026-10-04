@@ -1,0 +1,12 @@
+.git
+**/bin
+**/obj
+**/TestResults
+.env*
+data
+secrets
+**/*.pfx
+**/*.p12
+**/*.key
+**/*.pem
+.artifacts
