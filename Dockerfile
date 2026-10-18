@@ -12,7 +12,7 @@ RUN dotnet restore GraphMcp.slnx --locked-mode
 COPY tests/ tests/
 RUN dotnet test --solution GraphMcp.slnx --no-restore -c Release
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-noble-chiseled-extra@sha256:00e0ad6a7ef8c0c1391b87f05c7ac757a15740455688f2bfcd146a3f4b987efd AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-noble-chiseled-extra@sha256:3ed6558056b54d5c9dfefb7ff473728e022ff2bf1d976cbf8ee07b05ec594374 AS runtime
 WORKDIR /app
 COPY --from=build /out/ ./
 USER 1654:1654
